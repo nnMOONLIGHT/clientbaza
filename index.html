@@ -55,7 +55,6 @@
             transition: background-color 0.3s, color 0.3s;
         }
 
-        /* Защитный оверлей поверх картинок */
         .secure-wrapper {
             position: relative;
             width: 100%;
@@ -129,6 +128,11 @@
         .btn-primary:hover {
             background-color: var(--accent-hover);
             border-color: var(--accent-hover);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
         }
 
         main {
@@ -248,7 +252,6 @@
             background: rgba(239, 68, 68, 0.1);
         }
 
-        /* Модальные окна */
         .modal {
             display: none;
             position: fixed;
@@ -273,6 +276,8 @@
             width: 100%;
             max-width: 450px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+            max-height: 90vh;
+            overflow-y: auto;
         }
 
         .modal-content h3 {
@@ -330,7 +335,6 @@
             color: var(--text-main);
         }
 
-        /* Уведомление о защите */
         .toast {
             position: fixed;
             bottom: 30px;
@@ -346,6 +350,8 @@
             transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             z-index: 2000;
             pointer-events: none;
+            max-width: 90vw;
+            text-align: center;
         }
         .toast.show {
             transform: translateX(-50%) translateY(0);
@@ -399,14 +405,21 @@
     <div class="modal" id="addModal">
         <div class="modal-content">
             <h3>Добавить вариант</h3>
+
             <div class="form-group">
-                <label>Название варианта (например: Логотип v1 / Баннер)</label>
-                <input type="text" id="workTitle" class="form-control" placeholder="Введите название...">
+                <label>Выберите папку с вариантами (названия возьмутся из имён файлов)</label>
+                <input type="file" id="workFolder" class="form-control" webkitdirectory directory multiple accept="image/*">
             </div>
+
             <div class="form-group">
-                <label>Изображение (PNG, JPG, SVG)</label>
-                <input type="file" id="workImage" class="form-control" accept="image/*">
+                <label>…или выберите отдельные изображения</label>
+                <input type="file" id="workImage" class="form-control" accept="image/*" multiple>
             </div>
+
+            <p style="font-size:0.8rem; color: var(--text-muted); margin-top:-10px;">
+                Имя файла без расширения станет названием варианта. Сортировка — по имени файла.
+            </p>
+
             <div class="modal-buttons">
                 <button class="btn" id="closeAddModal">Отмена</button>
                 <button class="btn btn-primary" id="submitWork">Добавить</button>
@@ -452,7 +465,7 @@
         // Управление темой
         const themeToggle = document.getElementById('themeToggle');
         const htmlElement = document.documentElement;
-        
+
         const savedTheme = localStorage.getItem('theme') || 'dark';
         htmlElement.setAttribute('data-theme', savedTheme);
 
@@ -475,7 +488,6 @@
                         <p>${isAdmin ? 'Нажмите «Добавить вариант», чтобы добавить первый.' : 'Войдите как автор, чтобы добавить логотипы и баннеры.'}</p>
                     </div>
                 `;
-                // Не делаем return — ниже добавим кнопку для админа
             }
 
             works.forEach((work, index) => {
@@ -483,7 +495,7 @@
                 card.className = 'card';
                 card.innerHTML = `
                     <div class="card-header">
-                        <span class="card-number">Вариант 0${index + 1}</span>
+                        <span class="card-number">Вариант ${String(index + 1).padStart(2, '0')}</span>
                         <span class="card-title" title="${work.title}">${work.title}</span>
                     </div>
                     <div class="card-media">
@@ -503,7 +515,7 @@
                 gallery.appendChild(card);
             });
 
-            // Если вошел админ, всегда добавляем кнопку "Добавить вариант" в конец
+            // Кнопка «Добавить вариант» всегда видна админу
             if (isAdmin) {
                 const addCardBtn = document.createElement('div');
                 addCardBtn.className = 'card';
@@ -539,9 +551,9 @@
         });
 
         closeLoginModal.addEventListener('click', () => loginModal.classList.remove('active'));
-        
+
         submitLogin.addEventListener('click', () => {
-            if (adminPassword.value === 'admin123') { // Можешь поменять пароль тут
+            if (adminPassword.value === 'nastya2010') { // Можешь поменять пароль тут
                 isAdmin = true;
                 loginModal.classList.remove('active');
                 adminPassword.value = '';
@@ -554,41 +566,88 @@
             }
         });
 
-        // Добавление работы
+        // Добавление работы (папка или отдельные файлы)
         const addModal = document.getElementById('addModal');
         const closeAddModal = document.getElementById('closeAddModal');
         const submitWork = document.getElementById('submitWork');
-        const workTitle = document.getElementById('workTitle');
+        const workFolder = document.getElementById('workFolder');
         const workImage = document.getElementById('workImage');
 
         closeAddModal.addEventListener('click', () => addModal.classList.remove('active'));
 
-        submitWork.addEventListener('click', () => {
-            const title = workTitle.value.trim();
-            const file = workImage.files[0];
+        function readFileAsDataURL(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
 
-            if (!title || !file) {
-                showToast("Заполните название и выберите файл!");
+        function isImage(file) {
+            return (file.type && file.type.startsWith('image/')) ||
+                /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(file.name);
+        }
+
+        function titleFromFileName(name) {
+            return name.replace(/\.[^/.]+$/, '');
+        }
+
+        submitWork.addEventListener('click', async () => {
+            // Собираем файлы: сначала из папки, потом отдельные
+            let files = [];
+
+            if (workFolder.files && workFolder.files.length > 0) {
+                files = Array.from(workFolder.files).filter(isImage);
+            } else if (workImage.files && workImage.files.length > 0) {
+                files = Array.from(workImage.files).filter(isImage);
+            }
+
+            if (files.length === 0) {
+                showToast("Выберите папку или изображения!");
                 return;
             }
 
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const newWork = {
-                    id: Date.now(),
-                    title: title,
-                    img: e.target.result
-                };
-                works.push(newWork);
+            // Сортируем по имени файла
+            files.sort((f1, f2) =>
+                f1.name.localeCompare(f2.name, undefined, { numeric: true, sensitivity: 'base' })
+            );
+
+            submitWork.disabled = true;
+            const oldText = submitWork.textContent;
+            submitWork.textContent = 'Загрузка...';
+
+            let added = 0;
+            for (const file of files) {
+                try {
+                    const dataUrl = await readFileAsDataURL(file);
+                    works.push({
+                        id: Date.now() + Math.random(),
+                        title: titleFromFileName(file.name),
+                        img: dataUrl
+                    });
+                    added++;
+                } catch (err) {
+                    console.error('Ошибка чтения файла', file.name, err);
+                }
+            }
+
+            try {
                 localStorage.setItem('secure_works', JSON.stringify(works));
-                
-                workTitle.value = '';
-                workImage.value = '';
-                addModal.classList.remove('active');
-                renderGallery();
-                showToast("Вариант успешно добавлен!");
-            };
-            reader.readAsDataURL(file);
+            } catch (err) {
+                console.error('Не удалось сохранить в localStorage', err);
+                showToast("Не удалось сохранить все файлы: превышен лимит хранилища.");
+            }
+
+            workFolder.value = '';
+            workImage.value = '';
+            addModal.classList.remove('active');
+            renderGallery();
+
+            submitWork.disabled = false;
+            submitWork.textContent = oldText;
+
+            showToast(`Добавлено вариантов: ${added}`);
         });
 
         window.deleteWork = function(id) {
